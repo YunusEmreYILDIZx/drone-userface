@@ -2,6 +2,8 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import dgram from 'dgram';
+import { MavLinkPacketSplitter, MavLinkPacketParser, common } from 'node-mavlink';
 
 const app = express();
 app.use(cors());
@@ -15,6 +17,7 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
+const UDP_PORT = 14550; // Standart MAVLink portu
 
 // Base telemetry state
 let currentTelemetry = {
@@ -25,49 +28,126 @@ let currentTelemetry = {
   speed: 0,
   battery: 100,
   gps: {
-    lat: 41.0082, // Istanbul
+    lat: 41.0082, // Default Istanbul
     lng: 28.9784
   },
   flightMode: 'STABILIZE',
   armed: false
 };
 
-// Simulate Drone Telemetry (Mock MAVLink Stream)
-setInterval(() => {
-  // Add some realistic noise to the flight characteristics
-  if (currentTelemetry.armed) {
-    currentTelemetry.pitch = Math.sin(Date.now() / 1000) * 5 + (Math.random() - 0.5) * 2;
-    currentTelemetry.roll = Math.cos(Date.now() / 1500) * 8 + (Math.random() - 0.5) * 2;
-    currentTelemetry.yaw = (currentTelemetry.yaw + 0.5) % 360;
-    currentTelemetry.altitude = 10 + Math.sin(Date.now() / 2000) * 2;
-    currentTelemetry.speed = 15 + Math.random() * 2;
-    currentTelemetry.battery -= 0.01;
-    currentTelemetry.gps.lat += (Math.random() - 0.5) * 0.0001;
-    currentTelemetry.gps.lng += (Math.random() - 0.5) * 0.0001;
+let droneAddress = null; // Drone/MAVProxy'nin bağlı olduğu (UDP datası gelen) adres
+
+// MAVLink Parser ve Splitter Kurulumu
+const REGISTRY = {
+  ...common.REGISTRY,
+};
+const mavlinkParser = new MavLinkPacketParser();
+const mavlinkSplitter = new MavLinkPacketSplitter();
+mavlinkSplitter.pipe(mavlinkParser);
+
+// UDP Sunucusunu Oluştur
+const udpServer = dgram.createSocket('udp4');
+
+udpServer.on('error', (err) => {
+  console.error(`UDP Server error:\n${err.stack}`);
+  udpServer.close();
+});
+
+// Drone'dan veya MAVProxy'den gelen ham UDP mesajını (Buffer) alıp MAVLink formatına bölelim
+udpServer.on('message', (msg, rinfo) => {
+  // Gelen verinin kaynağını kaydet (Geri komut göndermek için)
+  if (!droneAddress || droneAddress.address !== rinfo.address || droneAddress.port !== rinfo.port) {
+    droneAddress = { address: rinfo.address, port: rinfo.port };
+    console.log(`[+] Drone telemetry data detected from ${rinfo.address}:${rinfo.port}`);
   }
+  
+  // Mesaj chunk'ını MAVLink ayırıcıya yolla
+  mavlinkSplitter.write(msg);
+});
 
-  // Emit to all connected clients
-  io.emit('telemetry', currentTelemetry);
-}, 100); // 10Hz tick rate
+// MAVLink Paketleri Çözümlendiğinde
+mavlinkParser.on('data', (packet) => {
+  const clazz = REGISTRY[packet.header.msgid];
+  if (clazz) {
+    const data = packet.protocol.data(packet.payload, clazz);
 
+    // Attitude (Pitch, Roll, Yaw) - Radyan'dan Dereceye dönüştür
+    if (data instanceof common.Attitude) {
+      currentTelemetry.pitch = (data.pitch * 180) / Math.PI;
+      currentTelemetry.roll = (data.roll * 180) / Math.PI;
+      currentTelemetry.yaw = (data.yaw * 180) / Math.PI;
+      if (currentTelemetry.yaw < 0) currentTelemetry.yaw += 360; // Pozitif derece
+    }
+    // GPS ve Irtifa (GlobalPositionInt)
+    else if (data instanceof common.GlobalPositionInt) {
+      currentTelemetry.gps.lat = data.lat / 10000000;
+      currentTelemetry.gps.lng = data.lon / 10000000;
+      currentTelemetry.altitude = data.relativeAlt / 1000; // Milimetreden metreye
+    }
+    // Hız (VfrHud)
+    else if (data instanceof common.VfrHud) {
+      currentTelemetry.speed = data.groundspeed;
+    }
+    // Batarya (SysStatus)
+    else if (data instanceof common.SysStatus) {
+      if (data.batteryRemaining !== -1) {
+        currentTelemetry.battery = data.batteryRemaining;
+      }
+    }
+    // Durum ve Armed/Disarmed (Heartbeat)
+    else if (data instanceof common.Heartbeat) {
+      // BaseMode bitmask'i içinden ARMED bayrağını (128) ara
+      const MAV_MODE_FLAG_SAFETY_ARMED = 128; 
+      const isArmed = (data.baseMode & MAV_MODE_FLAG_SAFETY_ARMED) !== 0;
+      if (currentTelemetry.armed !== isArmed) {
+        currentTelemetry.armed = isArmed;
+        io.emit('status_update', { message: isArmed ? 'Drone Armed' : 'Drone Disarmed' });
+      }
+    }
+  }
+});
+
+udpServer.on('listening', () => {
+  const address = udpServer.address();
+  console.log(`🚁 MAVLink UDP Listener aktif: Port ${address.port}`);
+});
+
+// 14550 standart MAVLink veri bağı / MAVProxy portudur
+udpServer.bind(UDP_PORT); 
+
+// Her 100ms'de bir en güncel MAVLink verisi ağaca (Frontend) postalanır
+setInterval(() => {
+    io.emit('telemetry', currentTelemetry);
+}, 100); // 10Hz
+
+// Frontend WebSocket Bağlantısı
 io.on('connection', (socket) => {
   console.log(`[+] GCS Client Connected: ${socket.id}`);
+  
+  // İlk bağlantı anında varsayılan bilgileri yolla
+  socket.emit('telemetry', currentTelemetry);
 
-  // Example of receiving commands from the web UI
+  // GCS Arayüzünden gelen komutları al (Web Browser -> Sunucu)
   socket.on('command', (cmd) => {
-    console.log(`[CMD] Received command: ${cmd.action}`);
+    console.log(`[CMD] Frontend requested: ${cmd.action}`);
+    
+    // Eğer bir drone UDP ile bağlı değilse uyarı ver
+    if (!droneAddress) {
+        console.warn('Drone UDP bağlantısı kurulamadığından komut iletilemiyor!');
+        socket.emit('status_update', { message: 'HATA: Drone hedef IP bulunamadı' });
+        return;
+    }
+
     if (cmd.action === 'ARM') {
-      currentTelemetry.armed = true;
-      io.emit('status_update', { message: 'Drone Armed' });
+       console.log(`--> Sending STANDART_ARM to ${droneAddress.address}:${droneAddress.port}`);
+       // TODO: Burada MAVLink CommandLong paketi encode edilip "udpServer.send(paket, droneAddress.port, ...)" ile atılacak
+       socket.emit('status_update', { message: 'Komut İletildi: Drone Armed (İstek)' });
     } else if (cmd.action === 'DISARM') {
-      currentTelemetry.armed = false;
-      currentTelemetry.pitch = 0;
-      currentTelemetry.roll = 0;
-      currentTelemetry.speed = 0;
-      io.emit('status_update', { message: 'Drone Disarmed' });
+       console.log(`--> Sending STANDART_DISARM to ${droneAddress.address}:${droneAddress.port}`);
+       socket.emit('status_update', { message: 'Komut İletildi: Drone Disarmed (İstek)' });
     } else if (cmd.action === 'SET_MODE') {
-      currentTelemetry.flightMode = cmd.mode;
-      io.emit('status_update', { message: `Mode changed to ${cmd.mode}` });
+       console.log(`--> Sending SET_MODE ${cmd.mode} to ${droneAddress.address}`);
+       socket.emit('status_update', { message: `Mod Değiştirildi: ${cmd.mode} (İstek)` });
     }
   });
 
@@ -77,5 +157,5 @@ io.on('connection', (socket) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 Drone GCS Backend running on port ${PORT}`);
+  console.log(`🚀 Drone GCS Backend (WebSockets) port ${PORT} üzerinde çalışıyor.`);
 });
