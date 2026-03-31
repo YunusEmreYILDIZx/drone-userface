@@ -9,8 +9,8 @@ const SOCKET_URL = `http://${window.location.hostname}:3001`;
 
 function App() {
   const [telemetry, setTelemetry] = useState({
-    pitch: 0, roll: 0, yaw: 0, altitude: 0, speed: 0, battery: 100,
-    gps: { lat: 41.0082, lng: 28.9784 }, flightMode: 'UNKNOWN', armed: false
+    pitch: 0, roll: 0, yaw: 0, altitude: 0, speed: 0, battery: 0,
+    gps: { lat: 0, lng: 0 }, flightMode: 'UNKNOWN', armed: false
   });
   const [connected, setConnected] = useState(false);
   const [socket, setSocket] = useState(null);
