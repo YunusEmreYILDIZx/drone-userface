@@ -7,10 +7,16 @@ import HUD from './components/HUD';
 
 const SOCKET_URL = `http://${window.location.hostname}:3001`;
 
+// null-safe değer gösterici
+const val = (v, decimals = 1, suffix = '') => {
+  if (v === null || v === undefined) return '—';
+  return typeof v === 'number' ? v.toFixed(decimals) + suffix : v;
+};
+
 function App() {
   const [telemetry, setTelemetry] = useState({
-    pitch: 0, roll: 0, yaw: 0, altitude: 0, speed: 0, battery: 0,
-    gps: { lat: 0, lng: 0 }, flightMode: 'UNKNOWN', armed: false
+    pitch: null, roll: null, yaw: null, altitude: null, speed: null, battery: null,
+    gps: { lat: null, lng: null }, flightMode: null, armed: null, droneConnected: false
   });
   const [connected, setConnected] = useState(false);
   const [socket, setSocket] = useState(null);
@@ -40,6 +46,9 @@ function App() {
     }
   };
 
+  // Gerçek bağlantı durumu: WebSocket bağlı VE drone heartbeat geliyor
+  const isDroneConnected = connected && telemetry.droneConnected;
+
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-neutral-900 text-white flex">
       {/* Background Map layer */}
@@ -59,17 +68,17 @@ function App() {
           <div className="flex gap-6 items-center">
              <div className="flex flex-col items-center">
                 <span className="text-xs text-gray-400">DURUM</span>
-                <span className={`font-bold ${telemetry.armed ? 'text-hud-alert' : 'text-hud-green'}`}>
-                  {telemetry.armed ? 'AKTİF' : 'BEKLEMEDE'}
+                <span className={`font-bold ${!isDroneConnected ? 'text-gray-500' : telemetry.armed ? 'text-hud-alert' : 'text-hud-green'}`}>
+                  {!isDroneConnected ? '—' : telemetry.armed ? 'AKTİF' : 'BEKLEMEDE'}
                 </span>
              </div>
              <div className="flex flex-col items-center">
                 <span className="text-xs text-gray-400">UÇUŞ MODU</span>
-                <span className="font-bold text-hud-cyan">{telemetry.flightMode}</span>
+                <span className="font-bold text-hud-cyan">{isDroneConnected && telemetry.flightMode ? telemetry.flightMode : '—'}</span>
              </div>
              <div className="flex items-center gap-2">
-                <Wifi className={connected ? 'text-hud-green' : 'text-red-500'} />
-                <span>{connected ? 'BAĞLANTI OK' : 'BAĞLANTI YOK'}</span>
+                <Wifi className={isDroneConnected ? 'text-hud-green' : 'text-red-500'} />
+                <span>{isDroneConnected ? 'BAĞLANTI OK' : 'BAĞLANTI YOK'}</span>
              </div>
           </div>
         </header>
@@ -80,10 +89,10 @@ function App() {
            <div className="w-80 flex flex-col gap-4 pointer-events-auto">
              <div className="glass-panel p-4 flex-1 flex flex-col items-center justify-center relative overflow-hidden">
                 <h2 className="absolute top-4 left-4 text-xs text-gray-400 font-bold z-20 shadow-black drop-shadow-md">YÖNELİM</h2>
-                <AttitudeIndicator pitch={telemetry.pitch} roll={telemetry.roll} />
+                <AttitudeIndicator pitch={telemetry.pitch ?? 0} roll={telemetry.roll ?? 0} />
                 <div className="absolute bottom-4 left-4 right-4 flex justify-between text-xs font-mono drop-shadow-md shadow-black">
-                  <span>R: {telemetry.roll.toFixed(1)}°</span>
-                  <span>P: {telemetry.pitch.toFixed(1)}°</span>
+                  <span>R: {val(telemetry.roll, 1, '°')}</span>
+                  <span>P: {val(telemetry.pitch, 1, '°')}</span>
                 </div>
              </div>
              
@@ -92,11 +101,11 @@ function App() {
                 <div className="flex items-center justify-center flex-1">
                   <div className="relative w-24 h-24 rounded-full border-2 border-hud-cyan flex items-center justify-center">
                     <Compass className="absolute text-glass-border" size={80} />
-                    <div className="w-full h-full absolute transition-transform duration-100 ease-linear" style={{ transform: `rotate(${telemetry.yaw}deg)` }}>
+                    <div className="w-full h-full absolute transition-transform duration-100 ease-linear" style={{ transform: `rotate(${telemetry.yaw ?? 0}deg)` }}>
                        <div className="w-2 h-4 bg-hud-alert mx-auto mt-1 rounded"></div>
                     </div>
                   </div>
-                  <div className="ml-6 text-3xl font-mono">{telemetry.yaw.toFixed(0)}°</div>
+                  <div className="ml-6 text-3xl font-mono">{val(telemetry.yaw, 0, '°')}</div>
                 </div>
              </div>
            </div>
@@ -109,22 +118,25 @@ function App() {
                 <h2 className="text-xs text-gray-400 font-bold mb-4">KOMUTLAR</h2>
                 <div className="grid grid-cols-2 gap-2">
                    <button 
-                     className="bg-hud-cyan/10 hover:bg-hud-cyan/30 border border-hud-cyan text-hud-cyan py-3 rounded transition-colors font-bold tracking-wider"
+                     className="bg-hud-cyan/10 hover:bg-hud-cyan/30 border border-hud-cyan text-hud-cyan py-3 rounded transition-colors font-bold tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
                      onClick={() => sendCommand('SET_MODE', 'AUTO')}
+                     disabled={!isDroneConnected}
                    >
                      OTOMATİK
                    </button>
                    <button 
-                     className="bg-hud-green/10 hover:bg-hud-green/30 border border-hud-green text-hud-green py-3 rounded transition-colors font-bold tracking-wider"
+                     className="bg-hud-green/10 hover:bg-hud-green/30 border border-hud-green text-hud-green py-3 rounded transition-colors font-bold tracking-wider disabled:opacity-30 disabled:cursor-not-allowed"
                      onClick={() => sendCommand('SET_MODE', 'STABILIZE')}
+                     disabled={!isDroneConnected}
                    >
                      STABİL (DENGE)
                    </button>
                    <button 
-                     className="bg-hud-alert/10 hover:bg-hud-alert/30 border border-hud-alert text-hud-alert py-3 rounded transition-colors font-bold tracking-wider col-span-2 mt-2"
+                     className="bg-hud-alert/10 hover:bg-hud-alert/30 border border-hud-alert text-hud-alert py-3 rounded transition-colors font-bold tracking-wider col-span-2 mt-2 disabled:opacity-30 disabled:cursor-not-allowed"
                      onClick={() => sendCommand(telemetry.armed ? 'DISARM' : 'ARM')}
+                     disabled={!isDroneConnected}
                    >
-                     {telemetry.armed ? 'MOTORLARI DURDUR' : 'MOTORLARI ÇALIŞTIR'}
+                     {!isDroneConnected ? 'DRONE BAĞLI DEĞİL' : telemetry.armed ? 'MOTORLARI DURDUR' : 'MOTORLARI ÇALIŞTIR'}
                    </button>
                 </div>
              </div>

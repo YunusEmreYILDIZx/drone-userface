@@ -1,8 +1,15 @@
 import React from 'react';
 import { Battery, Gauge, Mountain } from 'lucide-react';
 
+// null-safe değer gösterici
+const val = (v, decimals = 1) => {
+  if (v === null || v === undefined) return '—';
+  return v.toFixed(decimals);
+};
+
 export default function HUD({ telemetry }) {
   const getBatteryColor = (level) => {
+    if (level === null || level === undefined) return 'text-gray-500';
     if (level > 50) return 'text-hud-green';
     if (level > 20) return 'text-yellow-400';
     return 'text-hud-alert';
@@ -23,7 +30,7 @@ export default function HUD({ telemetry }) {
           <span className="text-sm text-gray-200 font-bold">İRTİFA</span>
         </div>
         <div className="text-3xl font-mono tracking-widest" style={{ textShadow: '0 0 10px var(--color-hud-cyan)' }}>
-          {telemetry.altitude.toFixed(1)} <span className="text-sm text-gray-400 font-sans tracking-normal">m</span>
+          {val(telemetry.altitude)} <span className="text-sm text-gray-400 font-sans tracking-normal">m</span>
         </div>
       </div>
 
@@ -34,7 +41,7 @@ export default function HUD({ telemetry }) {
           <span className="text-sm text-gray-200 font-bold">HIZ</span>
         </div>
         <div className="text-3xl font-mono tracking-widest text-white shadow-hud-cyan" style={{ textShadow: '0 0 10px rgba(255,255,255,0.5)' }}>
-          {telemetry.speed.toFixed(1)} <span className="text-sm text-gray-400 font-sans tracking-normal">m/s</span>
+          {val(telemetry.speed)} <span className="text-sm text-gray-400 font-sans tracking-normal">m/s</span>
         </div>
       </div>
 
@@ -45,14 +52,14 @@ export default function HUD({ telemetry }) {
           <span className="text-sm text-gray-200 font-bold">BATARYA</span>
         </div>
         <div className={`text-3xl font-mono tracking-widest ${getBatteryColor(telemetry.battery)}`} style={{ textShadow: `0 0 10px currentColor` }}>
-          {telemetry.battery.toFixed(1)} <span className="text-sm opacity-60 font-sans tracking-normal">%</span>
+          {val(telemetry.battery)} <span className="text-sm opacity-60 font-sans tracking-normal">%</span>
         </div>
       </div>
       
       {/* Lat/Lng Text */}
       <div className="mt-4 text-xs font-mono text-gray-400 flex justify-between px-2 z-10 bg-black/30 p-2 rounded">
-         <span>ENLEM__{telemetry.gps.lat.toFixed(6)}</span>
-         <span>BOYLAM__{telemetry.gps.lng.toFixed(6)}</span>
+         <span>ENLEM__{val(telemetry.gps.lat, 6)}</span>
+         <span>BOYLAM__{val(telemetry.gps.lng, 6)}</span>
       </div>
     </div>
   );

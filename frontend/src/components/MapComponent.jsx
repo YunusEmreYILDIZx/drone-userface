@@ -14,18 +14,21 @@ L.Icon.Default.mergeOptions({
 function ChangeView({ center }) {
   const map = useMap();
   useEffect(() => {
-    map.setView(center, map.getZoom());
+    if (center[0] !== null && center[1] !== null) {
+      map.setView(center, map.getZoom());
+    }
   }, [center, map]);
   return null;
 }
 
 export default function MapComponent({ gps }) {
-  const position = [gps.lat, gps.lng];
+  const hasGps = gps.lat !== null && gps.lng !== null && (gps.lat !== 0 || gps.lng !== 0);
+  const position = hasGps ? [gps.lat, gps.lng] : [0, 0];
   
   return (
     <MapContainer 
       center={position} 
-      zoom={17} 
+      zoom={hasGps ? 17 : 2} 
       scrollWheelZoom={true} 
       style={{ height: '100%', width: '100%', zIndex: 0 }}
       zoomControl={false}
@@ -34,8 +37,8 @@ export default function MapComponent({ gps }) {
         url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         attribution='&copy; <a href="https://carto.com/">CARTO</a>'
       />
-      <Marker position={position} />
-      <ChangeView center={position} />
+      {hasGps && <Marker position={position} />}
+      {hasGps && <ChangeView center={position} />}
     </MapContainer>
   );
 }

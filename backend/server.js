@@ -19,22 +19,27 @@ const io = new Server(server, {
 const PORT = process.env.PORT || 3001;
 const UDP_PORT = 14550; // Standart MAVLink portu
 
-// Base telemetry state
-let currentTelemetry = {
-  pitch: 0,
-  roll: 0,
-  yaw: 0,
-  altitude: 0,
-  speed: 0,
-  battery: 0,
-  gps: {
-    lat: 0,
-    lng: 0
-  },
-  flightMode: 'UNKNOWN',
-  armed: false
-};
+// Drone bağlantı durumu
+let droneConnected = false;
+let lastHeartbeatTime = 0;
+const HEARTBEAT_TIMEOUT_MS = 5000; // 5 saniye heartbeat gelmezse bağlantı koptu say
 
+// Base telemetry state - tüm değerler null (veri gelene kadar gösterilmez)
+let currentTelemetry = {
+  pitch: null,
+  roll: null,
+  yaw: null,
+  altitude: null,
+  speed: null,
+  battery: null,
+  gps: {
+    lat: null,
+    lng: null
+  },
+  flightMode: null,
+  armed: null,
+  droneConnected: false
+};
 
 let droneAddress = null; // Drone/MAVProxy'nin bağlı olduğu (UDP datası gelen) adres
 
@@ -114,6 +119,15 @@ mavlinkParser.on('data', (packet) => {
         }
         // Durum ve Armed/Disarmed (Heartbeat)
         else if (data instanceof common.Heartbeat) {
+          // Heartbeat geldi = drone bağlı
+          lastHeartbeatTime = Date.now();
+          if (!droneConnected) {
+            droneConnected = true;
+            currentTelemetry.droneConnected = true;
+            console.log('[+] Drone MAVLink bağlantısı kuruldu (Heartbeat alındı)');
+            io.emit('status_update', { message: 'Drone Bağlantısı Kuruldu' });
+          }
+
           // BaseMode bitmask'i içinden ARMED bayrağını (128) ara
           const MAV_MODE_FLAG_SAFETY_ARMED = 128; 
           const isArmed = (data.baseMode & MAV_MODE_FLAG_SAFETY_ARMED) !== 0;
@@ -139,6 +153,16 @@ udpServer.on('listening', () => {
 
 // 14550 standart MAVLink veri bağı / MAVProxy portudur
 udpServer.bind(UDP_PORT); 
+
+// Heartbeat timeout kontrolü - 5 saniye heartbeat gelmezse bağlantı koptu say
+setInterval(() => {
+    if (droneConnected && (Date.now() - lastHeartbeatTime > HEARTBEAT_TIMEOUT_MS)) {
+        droneConnected = false;
+        currentTelemetry.droneConnected = false;
+        console.log('[-] Drone MAVLink bağlantısı koptu (Heartbeat timeout)');
+        io.emit('status_update', { message: 'Drone Bağlantısı Kesildi' });
+    }
+}, 1000);
 
 // Her 100ms'de bir en güncel MAVLink verisi ağaca (Frontend) postalanır
 setInterval(() => {
